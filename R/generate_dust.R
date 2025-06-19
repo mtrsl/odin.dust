@@ -823,13 +823,27 @@ generate_dust_gpu <- function(dat, rewrite) {
                 cpp_namespace("gpu",
                               c(generate_dust_gpu_size(dat, rewrite),
                                 generate_dust_gpu_copy(dat, rewrite),
-                                generate_dust_gpu_update(dat),
+                                generate_dust_gpu_updates(dat),
                                 generate_dust_gpu_compare(dat))))
 }
 
 
-generate_dust_gpu_update <- function(dat) {
-  name <- sprintf("update_gpu<%s>", dat$config$base)
+generate_dust_gpu_updates <- function(dat) {
+  eqs <- generate_dust_equations(dat, NULL, dat$components$rhs$equations,
+                                 TRUE)
+
+  unlist(
+    lapply(
+      seq_along(eqs),
+      \(eq_id) generate_dust_gpu_update(dat, eqs, eq_id)
+    ),
+    use.names = FALSE
+  )
+}
+
+
+generate_dust_gpu_update <- function(dat, eqs, eq_id = 0) {
+  name <- sprintf("update_gpu_%i", eq_id)
 
   args <- c(
     set_names(dat$meta$time, dat$meta$dust$time_type),
@@ -842,14 +856,10 @@ generate_dust_gpu_update <- function(dat) {
     "dust::gpu::interleaved<%s::real_type>" = dat$meta$result)
   names(args) <- sub("%s", dat$config$base, names(args), fixed = TRUE)
 
-  eqs <- generate_dust_equations(dat, NULL, dat$components$rhs$equations,
-                                 TRUE)
-
   body <- c(sprintf("using real_type = %s::real_type;", dat$config$base),
-            dust_flatten_eqs(eqs))
+            dust_flatten_eqs(eqs[eq_id]))
 
-  c("template<>",
-    cpp_function("__device__ void", name, args, body))
+  cpp_function("__device__ void", name, args, body)
 }
 
 
