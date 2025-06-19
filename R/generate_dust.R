@@ -829,15 +829,21 @@ generate_dust_gpu <- function(dat, rewrite) {
 
 
 generate_dust_gpu_updates <- function(dat) {
+  # Here, which = dat$components$rhs$equations, which is how it only generates
+  # the subset of the equations we need, in blocks, when gpu = TRUE
   eqs <- generate_dust_equations(dat, NULL, dat$components$rhs$equations,
                                  TRUE)
 
-  unlist(
-    lapply(
-      seq_along(eqs),
-      \(eq_id) generate_dust_gpu_update(dat, eqs, eq_id)
+  c(
+    unlist(
+      lapply(
+        seq_along(eqs),
+        \(eq_id) generate_dust_gpu_update(dat, eqs, eq_id)
+      ),
+      use.names = FALSE
     ),
-    use.names = FALSE
+    generate_dust_gpu_update_array(dat, eqs),
+    generate_dust_gpu_update_template_impls(dat, eqs)
   )
 }
 
@@ -860,6 +866,51 @@ generate_dust_gpu_update <- function(dat, eqs, eq_id = 0) {
             dust_flatten_eqs(eqs[eq_id]))
 
   cpp_function("__device__ void", name, args, body)
+}
+
+
+generate_dust_gpu_update_array <- function(dat, eqs) {
+  c(
+    sprintf(
+      "__device__ update_gpu_ptr<%s> update_gpu_fns[] = {",
+      dat$config$base
+    ),
+    unlist(
+      lapply(
+        seq_along(eqs),
+        function(eq_id) {
+          line <- sprintf("update_gpu_%i", eq_id)
+          if (eq_id < length(eqs)) paste0(line, ",") else line
+        }
+      ),
+      use.names = FALSE
+    ),
+    "}"
+  )
+}
+
+
+generate_dust_gpu_update_template_impls <- function(dat, eqs) {
+  c(
+    c(
+      "template <>",
+      cpp_function(
+        "__host__ __device__ constexpr size_t",
+        sprintf("get_num_update_gpu_fns<%s>", dat$config$base),
+        NULL,
+        sprintf("return %i;", length(eqs))
+      )
+    ),
+    c(
+      "template <>",
+      cpp_function(
+        sprintf("__device__ update_gpu_ptr<%s>*", dat$config$base),
+        sprintf("get_update_gpu_fns<%s>", dat$config$base),
+        NULL,
+        "return update_gpu_fns;"
+      )
+    )
+  )
 }
 
 
