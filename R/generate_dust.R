@@ -885,7 +885,7 @@ generate_dust_gpu_update_array <- function(dat, eqs) {
       ),
       use.names = FALSE
     ),
-    "}"
+    "};"
   )
 }
 
