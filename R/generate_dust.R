@@ -843,7 +843,9 @@ generate_dust_gpu_updates <- function(dat) {
       use.names = FALSE
     ),
     generate_dust_gpu_update_array(dat, eqs),
-    generate_dust_gpu_update_template_impls(dat, eqs)
+    generate_dust_gpu_update_template_impls(dat, eqs),
+    generate_dust_gpu_dep_array(dat, eqs),
+    generate_dust_gpu_dep_template_impls(dat, eqs)
   )
 }
 
@@ -909,6 +911,47 @@ generate_dust_gpu_update_template_impls <- function(dat, eqs) {
         NULL,
         "return update_gpu_fns;"
       )
+    )
+  )
+}
+
+
+generate_dust_gpu_dep_array <- function(dat, eqs) {
+  c(
+    "size_t update_gpu_dependencies[][2] = {",
+    unlist(
+      lapply(
+        seq_len(length(eqs) - 1),
+        function(eq_id) {
+          line <- sprintf("{%i, %i}", eq_id, eq_id + 1)
+          if (eq_id < length(eqs)) paste0(line, ",") else line
+        }
+      ),
+      use.names = FALSE
+    ),
+    "};"
+  )
+}
+
+
+generate_dust_gpu_dep_template_impls <- function(dat, eqs) {
+  c(
+    c(
+      "template <>",
+      cpp_function(
+        "size_t",
+        sprintf("get_num_update_gpu_dependencies<%s>", dat$config$base),
+        NULL,
+        sprintf("return %i;", length(eqs) - 1)
+      )
+    ),
+    c(
+      "template <>",
+      # I don't think `cpp_function` can generate the weird function syntax
+      # needed here so pretty much hardcode it
+      sprintf("size_t (*get_update_gpu_dependencies<%s>())[2] {", dat$config$base),
+      "  return update_gpu_dependencies;",
+      "}"
     )
   )
 }
