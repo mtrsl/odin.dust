@@ -851,7 +851,7 @@ generate_dust_gpu_updates <- function(dat) {
 
 
 generate_dust_gpu_update <- function(dat, eqs, eq_id = 0) {
-  name <- sprintf("update_gpu_%i", eq_id)
+  name <- sprintf("update_gpu_%i", eq_id - 1)
 
   args <- c(
     set_names(dat$meta$time, dat$meta$dust$time_type),
@@ -881,7 +881,7 @@ generate_dust_gpu_update_array <- function(dat, eqs) {
       lapply(
         seq_along(eqs),
         function(eq_id) {
-          line <- sprintf("update_gpu_%i", eq_id)
+          line <- sprintf("  update_gpu_%i", eq_id - 1)
           if (eq_id < length(eqs)) paste0(line, ",") else line
         }
       ),
@@ -923,8 +923,8 @@ generate_dust_gpu_dep_array <- function(dat, eqs) {
       lapply(
         seq_len(length(eqs) - 1),
         function(eq_id) {
-          line <- sprintf("{%i, %i}", eq_id, eq_id + 1)
-          if (eq_id < length(eqs)) paste0(line, ",") else line
+          line <- sprintf("  {%i, %i}", eq_id - 1, eq_id)
+          if (eq_id < (length(eqs) - 1)) paste0(line, ",") else line
         }
       ),
       use.names = FALSE
