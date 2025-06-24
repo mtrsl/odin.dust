@@ -917,34 +917,55 @@ generate_dust_gpu_update_template_impls <- function(dat, eqs) {
 
 
 generate_dust_gpu_dep_array <- function(dat, eqs) {
-  c(
-    "size_t update_gpu_dependencies[][2] = {",
-    unlist(
-      lapply(
-        seq_len(length(eqs) - 1),
-        function(eq_id) {
-          line <- sprintf("  {%i, %i}", eq_id - 1, eq_id)
-          if (eq_id < (length(eqs) - 1)) paste0(line, ",") else line
-        }
-      ),
-      use.names = FALSE
-    ),
-    "};"
+  rhs_eqs <- dat$components$rhs$equations
+  rhs_idx <- setNames(seq_along(rhs_eqs), rhs_eqs)
+
+  # work out the dependencies between the "rhs" equations
+  deps <- lapply(
+    dat$equations[rhs_eqs],
+    \(eq) {
+      intersect(eq$depends$variables, rhs_eqs)
+    }
   )
-}
 
+  # construct the array elements from the deps
+  deps_lines <- unlist(
+    lapply(seq_along(deps), function(eq_id) {
+      sapply(deps[[eq_id]], function(dep) {
+        paste0("{", rhs_idx[[dep]] - 1, ", ", eq_id - 1, "},")
+      })
+    }),
+    use.names = FALSE
+  )
 
-generate_dust_gpu_dep_template_impls <- function(dat, eqs) {
+  # remove trailing comma from last line
+  if (length(deps_lines) > 0) {
+    deps_lines[length(deps_lines)] <- sub(",$", "", deps_lines[length(deps_lines)])
+  }
+
   c(
+    c(
+      "size_t update_gpu_dependencies[][2] = {",
+      deps_str <- paste(deps_lines, collapse = "\n"),
+      "};"
+    ),
+    # moved this here from the function below so we don't have to find a way to
+    # store the number of deps across function calls
     c(
       "template <>",
       cpp_function(
         "size_t",
         sprintf("get_num_update_gpu_dependencies<%s>", dat$config$base),
         NULL,
-        sprintf("return %i;", length(eqs) - 1)
+        sprintf("return %i;", length(deps_lines))
       )
-    ),
+    )
+  )
+}
+
+
+generate_dust_gpu_dep_template_impls <- function(dat, eqs) {
+  c(
     c(
       "template <>",
       # I don't think `cpp_function` can generate the weird function syntax
