@@ -932,7 +932,14 @@ generate_dust_gpu_dep_array <- function(dat, eqs) {
   deps_lines <- unlist(
     lapply(seq_along(deps), function(eq_id) {
       sapply(deps[[eq_id]], function(dep) {
-        paste0("{", rhs_idx[[dep]] - 1, ", ", eq_id - 1, "},")
+        # don't allow for equations to depend on themselves
+        # this appears to happen when one "equation" has multiple sections that
+        # update different parts of an array
+        if ((rhs_idx[[dep]] - 1) != (eq_id - 1)) {
+          paste0("{", rhs_idx[[dep]] - 1, ", ", eq_id - 1, "},")
+        } else {
+          NULL
+        }
       })
     }),
     use.names = FALSE
