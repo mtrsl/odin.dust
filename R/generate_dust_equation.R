@@ -46,6 +46,7 @@ generate_dust_equation <- function(eq, dat, rewrite, gpu, mixed) {
   ret <- f(eq, data_info, dat, rewrite, gpu)
 
   if (gpu) {
+    assign("asdf", dat, envir = .GlobalEnv)
     req <- setdiff(unique(dat$data$gpu$get()),
                    c(odin:::INDEX, dat$meta$time, eq$name))
     if (eq$lhs != eq$name && !(eq$lhs %in% eq$depends$variables)) {

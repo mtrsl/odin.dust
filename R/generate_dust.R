@@ -853,35 +853,173 @@ generate_dust_gpu_updates <- function(dat) {
 generate_dust_gpu_update <- function(dat, eqs, eq_id = 0) {
   name <- sprintf("update_gpu_%i", eq_id - 1)
 
+  update_gpu_preamble <- "
+  using real_type = typename %s::real_type;
+  using rng_state_type = typename %s::rng_state_type;
+  using rng_int_type = typename rng_state_type::int_type;
+  const size_t n_particles_each = n_particles / n_pars;
+  const auto data = nullptr;
+  const bool data_is_shared = false;
+
+#ifdef __CUDA_ARCH__
+  const int block_per_pars = (n_particles_each + blockDim.x - 1) / blockDim.x;
+  int j;
+  if (use_shared_int || use_shared_real) {
+    j = blockIdx.x / block_per_pars;
+  } else {
+    j = (blockIdx.x * blockDim.x + threadIdx.x) / n_particles_each;
+  }
+  device_ptrs<%s> shared_state =
+    load_shared_state<%s>(j,
+                         n_shared_int,
+                         n_shared_real,
+                         shared_int,
+                         shared_real,
+                         data,             // nullptr
+                         use_shared_int,
+                         use_shared_real,
+                         data_is_shared);  // false
+
+  int i, max_i;
+  if (use_shared_int || use_shared_real) {
+    // Pick particle index based on block, don't process if off the end
+    i = j * n_particles_each + (blockIdx.x % block_per_pars) * blockDim.x +
+      threadIdx.x;
+    max_i = n_particles_each * (j + 1);
+  } else {
+    // Otherwise CUDA thread number = particle
+    i = blockIdx.x * blockDim.x + threadIdx.x;
+    max_i = n_particles;
+  }
+
+  if (i < max_i) {
+#else
+  // omp here
+  for (size_t i = 0; i < n_particles; ++i) {
+    const int j = i / n_particles_each;
+    device_ptrs<%s> shared_state =
+      load_shared_state<%s>(j,
+                           n_shared_int,
+                           n_shared_real,
+                           shared_int,
+                           shared_real,
+                           data,             // nullptr
+                           use_shared_int,   // ignored
+                           use_shared_real,  // ignored
+                           data_is_shared);  // false
+#endif
+    interleaved<real_type> p_state(state, i, n_particles);
+    interleaved<real_type> p_state_next(state_next, i, n_particles);
+    interleaved<int> p_internal_int(internal_int, i, n_particles);
+    interleaved<real_type> p_internal_real(internal_real, i, n_particles);
+    interleaved<rng_int_type> p_rng(rng_state, i + update_kernel_idx * n_particles * rng_state_type::size(), n_particles);
+
+    // Swap our local copies of the state/state_next pointers every other
+    // timestep
+    size_t timestep_count = *d_time - time_start;
+
+    if (timestep_count % 2 == 1) {
+      interleaved<real_type> tmp = p_state;
+      p_state = p_state_next;
+      p_state_next = tmp;
+    }
+
+    rng_state_type rng_block = get_rng_state<rng_state_type>(p_rng);
+  "
+
+  #template <typename T>
+  #using update_gpu_ptr = void (*) (
+    #size_t,
+    #const interleaved<typename T::real_type>,
+    #interleaved<int>,
+    #interleaved<typename T::real_type>,
+    #const int *,
+    #const typename T::real_type *,
+    #typename T::rng_state_type&,
+    #interleaved<typename T::real_type>
+  #);
+
+  #const dust::gpu::interleaved<gsir::real_type> state,
+  #dust::gpu::interleaved<int> internal_int,
+  #dust::gpu::interleaved<gsir::real_type> internal_real,
+  #const int * shared_int,
+  #const gsir::real_type * shared_real,
+  #gsir::rng_state_type& rng_state,
+  #dust::gpu::interleaved<gsir::real_type> state_next
+
+  #// TODO(mjr) add update fn content here in odin.dust
+  #update_gpu_fns[update_fn_idx](
+    #*d_time,
+    #p_state,
+    #p_internal_int,
+    #p_internal_real,
+    #shared_state.shared_int,
+    #shared_state.shared_real,
+    #rng_block,
+    #p_state_next
+  #);
+
+  update_gpu_postamble <- "
+    // TODO(mjr) where should this go now? It was previously after each
+    // timestep (before swapping states) but here it's being called after every
+    // update function during every timestep.
+    SYNCWARP
+
+    put_rng_state(rng_block, p_rng);
+  }"
+
+  # (mjr) hardcoded a few of these types and argument names. Not sure if
+  # the existing `dat` structure currently has everything we need
+  time_type_ptr = paste(dat$meta$dust$time_type, "*")
   args <- c(
-    set_names(dat$meta$time, dat$meta$dust$time_type),
-    "const dust::gpu::interleaved<%s::real_type>" = dat$meta$state,
-    "dust::gpu::interleaved<int>" = dat$meta$dust$internal_int,
-    "dust::gpu::interleaved<%s::real_type>" = dat$meta$dust$internal_real,
+    set_names("time_start", dat$meta$dust$time_type),
+    set_names("d_time", time_type_ptr),
+    "size_t" = "n_particles",
+    "size_t" = "n_pars",
+    "typename %s::real_type *" = dat$meta$state,
+    "typename %s::real_type *" = dat$meta$result,
+    "int *" = dat$meta$dust$internal_int,
+    "typename %s::real_type *" = dat$meta$dust$internal_real,
+    "size_t" = "n_shared_int",
+    "size_t" = "n_shared_real",
     "const int *" = dat$meta$dust$shared_int,
-    "const %s::real_type *" = dat$meta$dust$shared_real,
-    "%s::rng_state_type&" = dat$meta$dust$rng_state,
-    "dust::gpu::interleaved<%s::real_type>" = dat$meta$result)
+    "const typename %s::real_type *" = dat$meta$dust$shared_real,
+    "typename %s::rng_state_type::int_type *" = dat$meta$dust$rng_state,
+    "bool" = "use_shared_int",
+    "bool" = "use_shared_real",
+    "size_t" = "update_kernel_idx")
   names(args) <- sub("%s", dat$config$base, names(args), fixed = TRUE)
 
-  body <- c(sprintf("using real_type = %s::real_type;", dat$config$base),
-            dust_flatten_eqs(eqs[eq_id]))
+  body <- c(
+    gsub("%s", dat$config$base, update_gpu_preamble, fixed = TRUE),
+    cpp_block(
+      c(
+        paste(dat$meta$dust$time_type, "step =", "*d_time;"),
+        sub("%s", dat$config$base, "const dust::gpu::interleaved<%s::real_type> state = p_state;", fixed = TRUE),
+        "dust::gpu::interleaved<int> internal_int = p_internal_int;",
+        sub("%s", dat$config$base, "dust::gpu::interleaved<%s::real_type> internal_real = p_internal_real;", fixed = TRUE),
+        "const int * shared_int = shared_state.shared_int;",
+        sub("%s", dat$config$base, "const %s::real_type * shared_real = shared_state.shared_real;", fixed = TRUE),
+        sub("%s", dat$config$base, "%s::rng_state_type& rng_state = rng_block;", fixed = TRUE),
+        sub("%s", dat$config$base, "dust::gpu::interleaved<%s::real_type> state_next = p_state_next;", fixed = TRUE),
+        dust_flatten_eqs(eqs[eq_id])
+      )
+    ),
+    update_gpu_postamble
+  )
 
-  cpp_function("__device__ void", name, args, body)
+  cpp_function("__global__ void", name, args, body)
 }
 
 
 generate_dust_gpu_update_array <- function(dat, eqs) {
   c(
-    sprintf(
-      "__device__ update_gpu_ptr<%s> update_gpu_fns[] = {",
-      dat$config$base
-    ),
+    "update_gpu_kernel_ptr update_gpu_kernels[] = {",
     unlist(
       lapply(
         seq_along(eqs),
         function(eq_id) {
-          line <- sprintf("  update_gpu_%i", eq_id - 1)
+          line <- sprintf("  (update_gpu_kernel_ptr) update_gpu_%i", eq_id - 1)
           if (eq_id < length(eqs)) paste0(line, ",") else line
         }
       ),
@@ -897,8 +1035,8 @@ generate_dust_gpu_update_template_impls <- function(dat, eqs) {
     c(
       "template <>",
       cpp_function(
-        "__host__ __device__ constexpr size_t",
-        sprintf("get_num_update_gpu_fns<%s>", dat$config$base),
+        "constexpr size_t",
+        sprintf("get_num_update_gpu_kernels<%s>", dat$config$base),
         NULL,
         sprintf("return %i;", length(eqs))
       )
@@ -906,10 +1044,10 @@ generate_dust_gpu_update_template_impls <- function(dat, eqs) {
     c(
       "template <>",
       cpp_function(
-        sprintf("__device__ update_gpu_ptr<%s>*", dat$config$base),
-        sprintf("get_update_gpu_fns<%s>", dat$config$base),
+        "update_gpu_kernel_ptr*",
+        sprintf("get_update_gpu_kernels<%s>", dat$config$base),
         NULL,
-        "return update_gpu_fns;"
+        "return update_gpu_kernels;"
       )
     )
   )
