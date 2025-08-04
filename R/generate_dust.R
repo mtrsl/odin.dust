@@ -912,7 +912,7 @@ generate_dust_gpu_update <- function(dat, eqs, eq_id = 0) {
     interleaved<real_type> p_state_next(state_next, i, n_particles);
     interleaved<int> p_internal_int(internal_int, i, n_particles);
     interleaved<real_type> p_internal_real(internal_real, i, n_particles);
-    interleaved<rng_int_type> p_rng(rng_state, i + update_kernel_idx * n_particles * rng_state_type::size(), n_particles);
+    interleaved<rng_int_type> p_rng(rng_state, i, n_particles);
 
     // Swap our local copies of the state/state_next pointers every other
     // timestep
