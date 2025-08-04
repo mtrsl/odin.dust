@@ -927,38 +927,6 @@ generate_dust_gpu_update <- function(dat, eqs, eq_id = 0) {
     rng_state_type rng_block = get_rng_state<rng_state_type>(p_rng);
   "
 
-  #template <typename T>
-  #using update_gpu_ptr = void (*) (
-    #size_t,
-    #const interleaved<typename T::real_type>,
-    #interleaved<int>,
-    #interleaved<typename T::real_type>,
-    #const int *,
-    #const typename T::real_type *,
-    #typename T::rng_state_type&,
-    #interleaved<typename T::real_type>
-  #);
-
-  #const dust::gpu::interleaved<gsir::real_type> state,
-  #dust::gpu::interleaved<int> internal_int,
-  #dust::gpu::interleaved<gsir::real_type> internal_real,
-  #const int * shared_int,
-  #const gsir::real_type * shared_real,
-  #gsir::rng_state_type& rng_state,
-  #dust::gpu::interleaved<gsir::real_type> state_next
-
-  #// TODO(mjr) add update fn content here in odin.dust
-  #update_gpu_fns[update_fn_idx](
-    #*d_time,
-    #p_state,
-    #p_internal_int,
-    #p_internal_real,
-    #shared_state.shared_int,
-    #shared_state.shared_real,
-    #rng_block,
-    #p_state_next
-  #);
-
   update_gpu_postamble <- "
     // TODO(mjr) where should this go now? It was previously after each
     // timestep (before swapping states) but here it's being called after every
