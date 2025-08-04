@@ -968,6 +968,8 @@ generate_dust_gpu_update <- function(dat, eqs, eq_id = 0) {
     put_rng_state(rng_block, p_rng);
   }"
 
+  update_gpu_preamble <- gsub("update_kernel_idx", eq_id - 1, update_gpu_preamble, fixed = TRUE)
+
   # (mjr) hardcoded a few of these types and argument names. Not sure if
   # the existing `dat` structure currently has everything we need
   time_type_ptr = paste(dat$meta$dust$time_type, "*")
@@ -986,8 +988,7 @@ generate_dust_gpu_update <- function(dat, eqs, eq_id = 0) {
     "const typename %s::real_type *" = dat$meta$dust$shared_real,
     "typename %s::rng_state_type::int_type *" = dat$meta$dust$rng_state,
     "bool" = "use_shared_int",
-    "bool" = "use_shared_real",
-    "size_t" = "update_kernel_idx")
+    "bool" = "use_shared_real")
   names(args) <- sub("%s", dat$config$base, names(args), fixed = TRUE)
 
   body <- c(
