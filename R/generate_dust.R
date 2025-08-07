@@ -984,18 +984,28 @@ generate_dust_gpu_update <- function(dat, eqs, uses_rng, eq_id = 0) {
     "bool" = "use_shared_real")
   names(args) <- sub("%s", dat$config$base, names(args), fixed = TRUE)
 
+  local_variables <- c(
+    paste(dat$meta$dust$time_type, "step =", "*d_time;"),
+    sub("%s", dat$config$base, "const dust::gpu::interleaved<%s::real_type> state = p_state;", fixed = TRUE),
+    "dust::gpu::interleaved<int> internal_int = p_internal_int;",
+    sub("%s", dat$config$base, "dust::gpu::interleaved<%s::real_type> internal_real = p_internal_real;", fixed = TRUE),
+    "const int * shared_int = shared_state.shared_int;",
+    sub("%s", dat$config$base, "const %s::real_type * shared_real = shared_state.shared_real;", fixed = TRUE),
+    sub("%s", dat$config$base, "dust::gpu::interleaved<%s::real_type> state_next = p_state_next;", fixed = TRUE)
+  )
+
+  if (uses_rng) {
+    local_variables <- c(
+      local_variables,
+      sub("%s", dat$config$base, "%s::rng_state_type& rng_state = rng_block;", fixed = TRUE)
+    )
+  }
+
   body <- c(
     gsub("%s", dat$config$base, update_gpu_preamble, fixed = TRUE),
     cpp_block(
       c(
-        paste(dat$meta$dust$time_type, "step =", "*d_time;"),
-        sub("%s", dat$config$base, "const dust::gpu::interleaved<%s::real_type> state = p_state;", fixed = TRUE),
-        "dust::gpu::interleaved<int> internal_int = p_internal_int;",
-        sub("%s", dat$config$base, "dust::gpu::interleaved<%s::real_type> internal_real = p_internal_real;", fixed = TRUE),
-        "const int * shared_int = shared_state.shared_int;",
-        sub("%s", dat$config$base, "const %s::real_type * shared_real = shared_state.shared_real;", fixed = TRUE),
-        sub("%s", dat$config$base, "%s::rng_state_type& rng_state = rng_block;", fixed = TRUE),
-        sub("%s", dat$config$base, "dust::gpu::interleaved<%s::real_type> state_next = p_state_next;", fixed = TRUE),
+        local_variables,
         eqn_code
       )
     ),
