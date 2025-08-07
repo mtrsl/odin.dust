@@ -852,7 +852,9 @@ generate_dust_gpu_updates <- function(dat) {
     generate_dust_gpu_update_array(dat, eqs),
     generate_dust_gpu_update_template_impls(dat, eqs),
     generate_dust_gpu_dep_array(dat, eqs),
-    generate_dust_gpu_dep_template_impls(dat, eqs)
+    generate_dust_gpu_dep_template_impls(dat, eqs),
+    generate_dust_gpu_rng_array(eqs_use_rng),
+    generate_dust_gpu_rng_array_template_impls(dat)
   )
 }
 
@@ -1110,6 +1112,37 @@ generate_dust_gpu_dep_template_impls <- function(dat, eqs) {
       sprintf("size_t (*get_update_gpu_dependencies<%s>())[2] {", dat$config$base),
       "  return update_gpu_dependencies;",
       "}"
+    )
+  )
+}
+
+
+generate_dust_gpu_rng_array <- function(eqs_use_rng) {
+  c(
+    "bool update_gpu_kernels_use_rng[] = {",
+    unlist(
+      lapply(
+        seq_along(eqs_use_rng),
+        function(eq_id) {
+          line <- sprintf("  %s", if (eqs_use_rng[eq_id]) "true" else "false")
+          if (eq_id < length(eqs_use_rng)) paste0(line, ",") else line
+        }
+      ),
+      use.names = FALSE
+    ),
+    "};"
+  )
+}
+
+
+generate_dust_gpu_rng_array_template_impls <- function(dat) {
+  c(
+    "template <>",
+    cpp_function(
+      "bool*",
+      sprintf("get_update_gpu_kernels_use_rng<%s>", dat$config$base),
+      NULL,
+      "return update_gpu_kernels_use_rng;"
     )
   )
 }
