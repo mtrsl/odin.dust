@@ -834,11 +834,18 @@ generate_dust_gpu_updates <- function(dat) {
   eqs <- generate_dust_equations(dat, NULL, dat$components$rhs$equations,
                                  TRUE)
 
+  # Work out which equations use an RNG by testing for the presence of
+  # "dust::random" in the generated equation code
+  eqs_use_rng <- sapply(
+    eqs,
+    \(eq) any(grepl("dust::random", eq, fixed = TRUE))
+  )
+
   c(
     unlist(
       lapply(
         seq_along(eqs),
-        \(eq_id) generate_dust_gpu_update(dat, eqs, eq_id)
+        \(eq_id) generate_dust_gpu_update(dat, eqs, eqs_use_rng[eq_id], eq_id)
       ),
       use.names = FALSE
     ),
@@ -850,8 +857,10 @@ generate_dust_gpu_updates <- function(dat) {
 }
 
 
-generate_dust_gpu_update <- function(dat, eqs, eq_id = 0) {
+generate_dust_gpu_update <- function(dat, eqs, uses_rng, eq_id = 0) {
   name <- sprintf("update_gpu_%i", eq_id - 1)
+
+  eqn_code <- dust_flatten_eqs(eqs[eq_id])
 
   update_gpu_preamble <- "
   using real_type = typename %s::real_type;
@@ -923,18 +932,32 @@ generate_dust_gpu_update <- function(dat, eqs, eq_id = 0) {
       p_state = p_state_next;
       p_state_next = tmp;
     }
-
-    rng_state_type rng_block = get_rng_state<rng_state_type>(p_rng);
   "
 
   update_gpu_postamble <- "
     // TODO(mjr) where should this go now? It was previously after each
     // timestep (before swapping states) but here it's being called after every
     // update function during every timestep.
-    SYNCWARP
+    SYNCWARP"
 
-    put_rng_state(rng_block, p_rng);
-  }"
+  # If the generated equation code uses the RNG then add the appropriate
+  # get/put calls
+  if (uses_rng) {
+    update_gpu_preamble <- c(
+      update_gpu_preamble,
+      "  rng_state_type rng_block = get_rng_state<rng_state_type>(p_rng);"
+    )
+
+    update_gpu_postamble <- c(
+      update_gpu_postamble,
+      "  put_rng_state(rng_block, p_rng);"
+    )
+  }
+
+  update_gpu_postamble <- c(
+    update_gpu_postamble,
+    "}"
+  )
 
   update_gpu_preamble <- gsub("update_kernel_idx", eq_id - 1, update_gpu_preamble, fixed = TRUE)
 
@@ -971,7 +994,7 @@ generate_dust_gpu_update <- function(dat, eqs, eq_id = 0) {
         sub("%s", dat$config$base, "const %s::real_type * shared_real = shared_state.shared_real;", fixed = TRUE),
         sub("%s", dat$config$base, "%s::rng_state_type& rng_state = rng_block;", fixed = TRUE),
         sub("%s", dat$config$base, "dust::gpu::interleaved<%s::real_type> state_next = p_state_next;", fixed = TRUE),
-        dust_flatten_eqs(eqs[eq_id])
+        eqn_code
       )
     ),
     update_gpu_postamble
