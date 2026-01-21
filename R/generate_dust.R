@@ -220,8 +220,7 @@ generate_dust_core_initial <- function(dat, rewrite) {
 
   initial <- dust_flatten_eqs(lapply(dat$data$variable$contents, set_initial))
 
-  args <- c(set_names(dat$meta$time, dat$meta$dust$time_type),
-            "rng_state_type&" = dat$meta$dust$rng_state)
+  args <- c(set_names(dat$meta$time, dat$meta$dust$time_type))
   body <- c(sprintf("std::vector<real_type> %s(%s);",
                     dat$meta$state, rewrite(dat$data$variable$length)),
             dust_flatten_eqs(eqs_initial),
@@ -852,9 +851,7 @@ generate_dust_gpu_updates <- function(dat) {
     generate_dust_gpu_update_array(dat, eqs),
     generate_dust_gpu_update_template_impls(dat, eqs),
     generate_dust_gpu_dep_array(dat, eqs),
-    generate_dust_gpu_dep_template_impls(dat, eqs),
-    generate_dust_gpu_rng_array(eqs_use_rng),
-    generate_dust_gpu_rng_array_template_impls(dat, eqs_use_rng)
+    generate_dust_gpu_dep_template_impls(dat, eqs)
   )
 }
 
@@ -923,7 +920,6 @@ generate_dust_gpu_update <- function(dat, eqs, uses_rng, eq_id = 0) {
     interleaved<real_type> p_state_next(state_next, i, n_particles);
     interleaved<int> p_internal_int(internal_int, i, n_particles);
     interleaved<real_type> p_internal_real(internal_real, i, n_particles);
-    interleaved<rng_int_type> p_rng(rng_state, i, n_particles);
 
     // Swap our local copies of the state/state_next pointers every other
     // timestep
@@ -947,12 +943,21 @@ generate_dust_gpu_update <- function(dat, eqs, uses_rng, eq_id = 0) {
   if (uses_rng) {
     update_gpu_preamble <- c(
       update_gpu_preamble,
-      "  rng_state_type rng_block = get_rng_state<rng_state_type>(p_rng);"
-    )
-
-    update_gpu_postamble <- c(
-      update_gpu_postamble,
-      "  put_rng_state(rng_block, p_rng);"
+      "rng_state_type rng_state;",
+      # TODO(mjr) don't hardcode 4?
+      # Set the first 3 counter components from timestep, particle, kernel.
+      # 4th is the number of blocks drawn
+      # The counter has 4 components and we have 4 things we want to count by -
+      # convenient. We could generalise this using a "mixed radix" counter
+      # that would allow us to arbitrarily divide the available bits between
+      # each part of the counter
+      "rng_state.ctr[0] = timestep_count;",
+      "rng_state.ctr[1] = i;",
+      paste0("rng_state.ctr[2] = ", eq_id - 1, ";"),
+      "rng_state.ctr[3] = 0;",
+      # TODO(mjr) Need to decide how to allow users to set the key from the R interface
+      "rng_state.key[0] = 0;",
+      "rng_state.key[1] = 0;"
     )
   }
 
@@ -979,27 +984,23 @@ generate_dust_gpu_update <- function(dat, eqs, uses_rng, eq_id = 0) {
     "size_t" = "n_shared_real",
     "const int *" = dat$meta$dust$shared_int,
     "const typename %s::real_type *" = dat$meta$dust$shared_real,
-    "typename %s::rng_state_type::int_type *" = dat$meta$dust$rng_state,
     "bool" = "use_shared_int",
     "bool" = "use_shared_real")
   names(args) <- sub("%s", dat$config$base, names(args), fixed = TRUE)
 
+  # In the original upstream code, the kernel passed some of its params/local
+  # variables to the update function, but the generated update function code
+  # used different names for them. The "local variables" are here to convert
+  # between the two sets of variable names so we don't have to change the
+  # update function generation code
   local_variables <- c(
-    paste(dat$meta$dust$time_type, "step =", "*d_time;"),
-    sub("%s", dat$config$base, "const dust::gpu::interleaved<%s::real_type> state = p_state;", fixed = TRUE),
-    "dust::gpu::interleaved<int> internal_int = p_internal_int;",
-    sub("%s", dat$config$base, "dust::gpu::interleaved<%s::real_type> internal_real = p_internal_real;", fixed = TRUE),
-    "const int * shared_int = shared_state.shared_int;",
-    sub("%s", dat$config$base, "const %s::real_type * shared_real = shared_state.shared_real;", fixed = TRUE),
-    sub("%s", dat$config$base, "dust::gpu::interleaved<%s::real_type> state_next = p_state_next;", fixed = TRUE)
+    paste("[[maybe_unused]]", dat$meta$dust$time_type, "step =", "*d_time;"),
+    "[[maybe_unused]] dust::gpu::interleaved<int> internal_int = p_internal_int;",
+    sub("%s", dat$config$base, "[[maybe_unused]] dust::gpu::interleaved<%s::real_type> internal_real = p_internal_real;", fixed = TRUE),
+    "[[maybe_unused]] const int * shared_int = shared_state.shared_int;",
+    sub("%s", dat$config$base, "[[maybe_unused]] const %s::real_type * shared_real = shared_state.shared_real;", fixed = TRUE),
+    sub("%s", dat$config$base, "[[maybe_unused]] dust::gpu::interleaved<%s::real_type> state_next = p_state_next;", fixed = TRUE)
   )
-
-  if (uses_rng) {
-    local_variables <- c(
-      local_variables,
-      sub("%s", dat$config$base, "%s::rng_state_type& rng_state = rng_block;", fixed = TRUE)
-    )
-  }
 
   body <- c(
     gsub("%s", dat$config$base, update_gpu_preamble, fixed = TRUE),
@@ -1074,7 +1075,7 @@ generate_dust_gpu_dep_array <- function(dat, eqs) {
   deps_lines <- unlist(
     lapply(seq_along(deps), function(eq_id) {
       sapply(deps[[eq_id]], function(dep) {
-        # don't allow for equations to depend on themselves
+        # don't allow equations to depend on themselves
         # this appears to happen when one "equation" has multiple sections that
         # update different parts of an array
         if ((rhs_idx[[dep]] - 1) != (eq_id - 1)) {
@@ -1122,48 +1123,6 @@ generate_dust_gpu_dep_template_impls <- function(dat, eqs) {
       sprintf("size_t (*get_update_gpu_dependencies<%s>())[2] {", dat$config$base),
       "  return update_gpu_dependencies;",
       "}"
-    )
-  )
-}
-
-
-generate_dust_gpu_rng_array <- function(eqs_use_rng) {
-  c(
-    "bool update_gpu_kernels_use_rng[] = {",
-    unlist(
-      lapply(
-        seq_along(eqs_use_rng),
-        function(eq_id) {
-          line <- sprintf("  %s", if (eqs_use_rng[eq_id]) "true" else "false")
-          if (eq_id < length(eqs_use_rng)) paste0(line, ",") else line
-        }
-      ),
-      use.names = FALSE
-    ),
-    "};"
-  )
-}
-
-
-generate_dust_gpu_rng_array_template_impls <- function(dat, eqs_use_rng) {
-  c(
-    c(
-      "template <>",
-      cpp_function(
-        "constexpr size_t",
-        sprintf("get_num_update_gpu_kernels_use_rng<%s>", dat$config$base),
-        NULL,
-        sprintf("return %i;", sum(eqs_use_rng))
-      )
-    ),
-    c(
-      "template <>",
-      cpp_function(
-        "bool*",
-        sprintf("get_update_gpu_kernels_use_rng<%s>", dat$config$base),
-        NULL,
-        "return update_gpu_kernels_use_rng;"
-      )
     )
   )
 }
