@@ -951,7 +951,8 @@ generate_dust_gpu_update <- function(dat, eqs, uses_rng, eq_id = 0) {
       # convenient. We could generalise this using a "mixed radix" counter
       # that would allow us to arbitrarily divide the available bits between
       # each part of the counter
-      "rng_state.ctr[0] = timestep_count;",
+      #"rng_state.ctr[0] = timestep_count;",
+      "rng_state.ctr[0] = *d_time;",
       "rng_state.ctr[1] = i;",
       paste0("rng_state.ctr[2] = ", eq_id - 1, ";"),
       "rng_state.ctr[3] = 0;",
