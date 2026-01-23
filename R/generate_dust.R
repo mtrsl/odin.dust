@@ -995,6 +995,7 @@ generate_dust_gpu_update <- function(dat, eqs, uses_rng, eq_id = 0) {
   # between the two sets of variable names so we don't have to change the
   # update function generation code
   local_variables <- c(
+    sub("%s", dat$config$base, "[[maybe_unused]] dust::gpu::interleaved<%s::real_type> state = p_state;", fixed = TRUE),
     paste("[[maybe_unused]]", dat$meta$dust$time_type, "step =", "*d_time;"),
     "[[maybe_unused]] dust::gpu::interleaved<int> internal_int = p_internal_int;",
     sub("%s", dat$config$base, "[[maybe_unused]] dust::gpu::interleaved<%s::real_type> internal_real = p_internal_real;", fixed = TRUE),
